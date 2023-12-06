@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use std::fs;
 
 fn main() {
@@ -8,15 +9,13 @@ fn main() {
 
 fn solve1(input: &str) {
     let almanac = parse_almanac_with_seeds(input);
-    let locations = almanac.seeds_to_locations();
-    let lowest_location = locations.iter().min().unwrap();
+    let lowest_location = almanac.lowest_location();
     println!("{}", lowest_location);
 }
 
 fn solve2(input: &str) {
     let almanac = parse_almanac_with_seed_range(input);
-    let locations = almanac.seeds_to_locations();
-    let lowest_location = locations.iter().min().unwrap();
+    let lowest_location = almanac.lowest_location();
     println!("{}", lowest_location);
 }
 
@@ -35,7 +34,7 @@ struct Map {
 
 #[derive(Debug)]
 struct Almanac {
-    seeds: Vec<u64>,
+    seed_ranges: Vec<(u64, u64)>,
     seed_to_soil: Map,
     soil_to_fertilizer: Map,
     fertilizer_to_water: Map,
@@ -53,9 +52,9 @@ fn parse_almanac_with_seeds(input: &str) -> Almanac {
     parse_almanac(input, &parse_seeds)
 }
 
-fn parse_almanac(input: &str, parse_seed_func: &dyn Fn(&str) -> Vec<u64>) -> Almanac {
+fn parse_almanac(input: &str, parse_seed_func: &dyn Fn(&str) -> Vec<(u64, u64)>) -> Almanac {
     let parts: Vec<_> = input.split("\n\n").collect();
-    let seeds = parse_seed_func(parts[0]);
+    let seed_ranges = parse_seed_func(parts[0]);
     let maps: Vec<_> = parts[1..].iter().map(|p| parse_map(p)).collect();
 
     let seed_to_soil = maps
@@ -95,7 +94,7 @@ fn parse_almanac(input: &str, parse_seed_func: &dyn Fn(&str) -> Vec<u64>) -> Alm
         .unwrap();
 
     Almanac {
-        seeds,
+        seed_ranges,
         seed_to_soil,
         soil_to_fertilizer,
         fertilizer_to_water,
@@ -106,29 +105,29 @@ fn parse_almanac(input: &str, parse_seed_func: &dyn Fn(&str) -> Vec<u64>) -> Alm
     }
 }
 
-fn parse_seeds(line: &str) -> Vec<u64> {
+fn parse_seeds(line: &str) -> Vec<(u64, u64)> {
     let parts: Vec<_> = line.split(':').collect();
     assert_eq!(parts[0], "seeds");
     parts[1]
         .trim()
         .split(' ')
         .map(|s| s.parse().unwrap())
+        .map(|s| (s, s))
         .collect()
 }
 
-fn parse_seeds_range(line: &str) -> Vec<u64> {
+fn parse_seeds_range(line: &str) -> Vec<(u64, u64)> {
     let parts: Vec<_> = line.split(':').collect();
     assert_eq!(parts[0], "seeds");
     let mut numbers = parts[1].trim().split(' ').map(|s| s.parse().unwrap());
 
-    let mut seeds: Vec<u64> = Vec::new();
+    let mut seed_ranges: Vec<(u64, u64)> = Vec::new();
     while let Some(start) = numbers.next() {
         let length = numbers.next().unwrap();
-        for i in start..(start + length) {
-            seeds.push(i);
-        }
+
+        seed_ranges.push((start, start + length - 1));
     }
-    seeds
+    seed_ranges
 }
 
 fn parse_map(input: &str) -> Map {
@@ -174,20 +173,27 @@ impl Map {
 }
 
 impl Almanac {
-    fn seeds_to_locations(&self) -> Vec<u64> {
-        self.seeds
-            .clone()
-            .into_iter()
-            .map(|seed| self.seed_to_soil.source_to_destination(seed))
-            .map(|soil| self.soil_to_fertilizer.source_to_destination(soil))
-            .map(|fertilizer| self.fertilizer_to_water.source_to_destination(fertilizer))
-            .map(|water| self.water_to_light.source_to_destination(water))
-            .map(|light| self.light_to_temperature.source_to_destination(light))
-            .map(|temperature| {
-                self.temperature_to_humidity
-                    .source_to_destination(temperature)
-            })
-            .map(|humidity| self.humidity_to_location.source_to_destination(humidity))
-            .collect()
+    fn lowest_location(&self) -> u64 {
+        let mut lowest: u64 = std::u64::MAX;
+        for (start, end) in self.seed_ranges.clone().into_iter() {
+            let location: u64 = (start..=end)
+                .into_par_iter()
+                .map(|seed| self.seed_to_soil.source_to_destination(seed))
+                .map(|soil| self.soil_to_fertilizer.source_to_destination(soil))
+                .map(|fertilizer| self.fertilizer_to_water.source_to_destination(fertilizer))
+                .map(|water| self.water_to_light.source_to_destination(water))
+                .map(|light| self.light_to_temperature.source_to_destination(light))
+                .map(|temperature| {
+                    self.temperature_to_humidity
+                        .source_to_destination(temperature)
+                })
+                .map(|humidity| self.humidity_to_location.source_to_destination(humidity))
+                .min()
+                .unwrap();
+            if location < lowest {
+                lowest = location;
+            }
+        }
+        lowest
     }
 }
